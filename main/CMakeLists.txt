@@ -1,0 +1,17 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "services/bluetooth/bluetooth_service.c"
+        "services/dualsense/dualsense_transport.c"
+        "services/dualsense/dualsense_report.c"
+        "services/dualsense/dualsense_service.c"
+        "services/dualsense/esp32/dualsense_esp32_btc.c"
+    INCLUDE_DIRS
+        "."
+        "services/bluetooth"
+        "services/dualsense"
+        "services/dualsense/esp32"
+    REQUIRES
+        esp_hid
+        nvs_flash
+)

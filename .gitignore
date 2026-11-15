@@ -1,0 +1,10 @@
+# ESP-IDF build output
+build/
+
+# Generated configuration (sdkconfig.defaults is the committed source of truth)
+sdkconfig
+sdkconfig.old
+
+# Python
+__pycache__/
+*.pyc

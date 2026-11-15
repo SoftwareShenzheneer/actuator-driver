@@ -1,0 +1,11 @@
+menu "DualSense"
+
+    config DUALSENSE_PEER_NAME
+        string "DualSense Bluetooth device name"
+        default "Wireless Controller"
+        help
+            Bluetooth Classic device name prefix to match during discovery.
+            The PS5 DualSense advertises "Wireless Controller" (the same name
+            is also used by the DualShock 4, so tighten this if needed).
+
+endmenu
