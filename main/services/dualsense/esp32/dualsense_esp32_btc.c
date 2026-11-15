@@ -42,11 +42,6 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
         if (evt->status == ESP_OK) {
             self->connected = true;
 
-            /* esp_hid does not auto-negotiate the HID protocol mode; tell the
-             * controller to use report mode and stream continuously. */
-            bluetooth_service_hid_set_protocol(evt->dev, ESP_HID_PROTOCOL_MODE_REPORT);
-            bluetooth_service_hid_set_idle(evt->dev, 0);
-
             const char *name = self->name[0] ? self->name :
                                (esp_hidh_dev_name_get(evt->dev) ? esp_hidh_dev_name_get(evt->dev) : "?");
             ESP_LOGI(TAG, "connected: %s (VID 0x%04x, PID 0x%04x, transport %d)",
@@ -65,14 +60,21 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
         }
         break;
 
-    case BLUETOOTH_HID_INPUT:
-        /* Raw report at INFO so the byte layout can be validated on hardware. */
-        ESP_LOGI(TAG, "input: report_id=0x%02x len=%u", evt->report_id, evt->length);
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, evt->data, evt->length, ESP_LOG_INFO);
+    case BLUETOOTH_HID_INPUT: {
+        /* Log raw reports only every ~5 s. A full 0x31 stream at high rate would
+         * otherwise flood the UART and starve the BT stack (link drop). */
+        static TickType_t last_log = 0;
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_log) >= pdMS_TO_TICKS(5000)) {
+            last_log = now;
+            ESP_LOGI(TAG, "input: report_id=0x%02x len=%u", evt->report_id, evt->length);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, evt->data, evt->length, ESP_LOG_INFO);
+        }
         if (self->sink != NULL && self->sink->on_input != NULL) {
             self->sink->on_input(self->sink->ctx, evt->report_id, evt->data, evt->length);
         }
         break;
+    }
 
     case BLUETOOTH_HID_CLOSE:
         if (self->connected) {

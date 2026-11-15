@@ -6,11 +6,17 @@ idf_component_register(
         "services/dualsense/dualsense_report.c"
         "services/dualsense/dualsense_service.c"
         "services/dualsense/esp32/dualsense_esp32_btc.c"
+        "services/dualshock4/dualshock4_transport.c"
+        "services/dualshock4/dualshock4_report.c"
+        "services/dualshock4/dualshock4_service.c"
+        "services/dualshock4/esp32/dualshock4_esp32_btc.c"
     INCLUDE_DIRS
         "."
         "services/bluetooth"
         "services/dualsense"
         "services/dualsense/esp32"
+        "services/dualshock4"
+        "services/dualshock4/esp32"
     REQUIRES
         esp_hid
         nvs_flash
