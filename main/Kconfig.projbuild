@@ -1,11 +1,29 @@
-menu "DualSense"
+menu "Gamepad"
+
+    choice GAMEPAD_MODEL
+        prompt "Gamepad model"
+        default GAMEPAD_DUALSENSE
+
+        config GAMEPAD_DUALSENSE
+            bool "Sony DualSense (PS5)"
+
+        config GAMEPAD_DUALSHOCK4
+            bool "Sony DualShock 4 (PS4)"
+
+    endchoice
 
     config DUALSENSE_PEER_NAME
-        string "DualSense Bluetooth device name"
+        string "DualSense Bluetooth device name prefix"
+        default "DualSense Wireless Controller"
+        help
+            Bluetooth Classic device name prefix to match during discovery.
+            A DualSense advertises "DualSense Wireless Controller".
+
+    config DUALSHOCK4_PEER_NAME
+        string "DualShock 4 Bluetooth device name prefix"
         default "Wireless Controller"
         help
             Bluetooth Classic device name prefix to match during discovery.
-            The PS5 DualSense advertises "Wireless Controller" (the same name
-            is also used by the DualShock 4, so tighten this if needed).
+            A DualShock 4 advertises "Wireless Controller".
 
 endmenu
