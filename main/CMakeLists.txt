@@ -10,6 +10,9 @@ idf_component_register(
         "services/dualshock4/dualshock4_report.c"
         "services/dualshock4/dualshock4_service.c"
         "services/dualshock4/esp32/dualshock4_esp32_btc.c"
+        "services/gamepad/gamepad.c"
+        "services/hostlink/host_protocol.c"
+        "services/hostlink/esp32/hostlink_esp32_uart.c"
     INCLUDE_DIRS
         "."
         "services/bluetooth"
@@ -17,7 +20,11 @@ idf_component_register(
         "services/dualsense/esp32"
         "services/dualshock4"
         "services/dualshock4/esp32"
+        "services/gamepad"
+        "services/hostlink"
+        "services/hostlink/esp32"
     REQUIRES
         esp_hid
         nvs_flash
+        esp_driver_uart
 )

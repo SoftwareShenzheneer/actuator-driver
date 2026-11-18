@@ -27,3 +27,25 @@ menu "Gamepad"
             A DualShock 4 advertises "Wireless Controller".
 
 endmenu
+
+menu "Host link (UART)"
+
+    config HOSTLINK_UART_TX_GPIO
+        int "Host-link UART TX GPIO"
+        default 17
+        help
+            ESP32 GPIO used as the host-link UART TX line.
+
+    config HOSTLINK_UART_RX_GPIO
+        int "Host-link UART RX GPIO"
+        default 16
+        help
+            ESP32 GPIO used as the host-link UART RX line.
+
+    config HOSTLINK_UART_BAUDRATE
+        int "Host-link UART baud rate"
+        default 921600
+        help
+            Baud rate for the serial link to the host.
+
+endmenu
