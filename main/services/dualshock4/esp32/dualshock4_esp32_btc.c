@@ -9,8 +9,10 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 
 #include "esp_log.h"
+#include "nvs.h"
 
 #include "dualshock4_esp32_btc.h"
 #include "dualshock4_types.h"
@@ -18,6 +20,19 @@
 
 #define DUALSHOCK4_PEER_NAME   CONFIG_DUALSHOCK4_PEER_NAME
 #define SCAN_DURATION_SECONDS  5
+
+/* After a reset, reconnect to the last-known controller for this long before
+ * falling back to a fresh discovery scan. */
+#define RECONNECT_TIMEOUT_MS   10000
+
+/* NVS location of the last-known controller address (6-byte BD_ADDR blob). */
+#define NVS_NAMESPACE          "dualshock4"
+#define NVS_KEY_BDA            "bda"
+
+/* Event-group bits used to signal the result of a reconnect attempt from the
+ * HID-host event callback back to the connect task. */
+#define RECONN_BIT_CONNECTED   BIT0
+#define RECONN_BIT_FAILED      BIT1
 
 static const char *TAG = "dualshock4_btc";
 
@@ -31,6 +46,47 @@ typedef struct {
 
 static dualshock4_esp32_btc_t s_self;
 static dualshock4_transport_t s_transport;
+static EventGroupHandle_t s_reconn_evt;   /* signals a reconnect attempt's outcome */
+
+/* ------------------------------------------------------------------------- */
+/* NVS persistence of the last-known controller address                      */
+/* ------------------------------------------------------------------------- */
+
+static esp_err_t nvs_save_bda(const uint8_t bda[6])
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = nvs_set_blob(handle, NVS_KEY_BDA, bda, 6);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
+}
+
+static bool nvs_load_bda(uint8_t bda[6])
+{
+    nvs_handle_t handle;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+
+    size_t len = 6;
+    esp_err_t err = nvs_get_blob(handle, NVS_KEY_BDA, bda, &len);
+    nvs_close(handle);
+    return (err == ESP_OK && len == 6);
+}
+
+static void signal_reconn(EventBits_t bits)
+{
+    if (s_reconn_evt != NULL) {
+        xEventGroupSetBits(s_reconn_evt, bits);
+    }
+}
 
 /* HID host events are delivered here from the bluetooth_service. */
 static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
@@ -41,6 +97,13 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
     case BLUETOOTH_HID_OPEN:
         if (evt->status == ESP_OK) {
             self->connected = true;
+            signal_reconn(RECONN_BIT_CONNECTED);
+
+            /* Remember the address so the next boot can reconnect directly. */
+            const uint8_t *bda = esp_hidh_dev_bda_get(evt->dev);
+            if (bda != NULL && nvs_save_bda(bda) != ESP_OK) {
+                ESP_LOGW(TAG, "failed to persist controller address");
+            }
 
             const char *name = self->name[0] ? self->name :
                                (esp_hidh_dev_name_get(evt->dev) ? esp_hidh_dev_name_get(evt->dev) : "?");
@@ -54,6 +117,9 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
             }
         } else {
             ESP_LOGE(TAG, "open failed: %d", evt->status);
+            self->connected = false;
+            self->dev = NULL;   /* esp_hid auto-frees a failed-open device */
+            signal_reconn(RECONN_BIT_FAILED);
             if (self->sink != NULL && self->sink->on_conn != NULL) {
                 self->sink->on_conn(self->sink->ctx, DUALSHOCK4_CONN_ERROR);
             }
@@ -77,6 +143,7 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
     }
 
     case BLUETOOTH_HID_CLOSE:
+        signal_reconn(RECONN_BIT_FAILED);
         if (self->connected) {
             self->connected = false;
             if (self->sink != NULL && self->sink->on_conn != NULL) {
@@ -94,9 +161,8 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
     }
 }
 
-static void scan_and_connect_task(void *arg)
+static void scan_and_connect(dualshock4_esp32_btc_t *self)
 {
-    dualshock4_esp32_btc_t *self = (dualshock4_esp32_btc_t *)arg;
     size_t num = 0;
     bluetooth_device_t *results = NULL;
     bluetooth_device_t *found = NULL;
@@ -108,7 +174,6 @@ static void scan_and_connect_task(void *arg)
         if (self->sink != NULL && self->sink->on_conn != NULL) {
             self->sink->on_conn(self->sink->ctx, DUALSHOCK4_CONN_ERROR);
         }
-        vTaskDelete(NULL);
         return;
     }
 
@@ -142,6 +207,58 @@ static void scan_and_connect_task(void *arg)
     }
 
     bluetooth_service_scan_results_free(results);
+}
+
+/* Attempt a direct reconnect to `bda`. Blocks up to RECONNECT_TIMEOUT_MS for the
+ * asynchronous OPEN/CLOSE result. Returns true if the controller connected. */
+static bool try_reconnect(dualshock4_esp32_btc_t *self, const uint8_t bda[6])
+{
+    xEventGroupClearBits(s_reconn_evt, RECONN_BIT_CONNECTED | RECONN_BIT_FAILED);
+
+    self->dev = bluetooth_service_hid_open(bda, ESP_HID_TRANSPORT_BT, 0);
+    if (self->dev == NULL) {
+        return false;
+    }
+
+    EventBits_t bits = xEventGroupWaitBits(s_reconn_evt,
+                                           RECONN_BIT_CONNECTED | RECONN_BIT_FAILED,
+                                           pdTRUE,          /* clear bits on exit */
+                                           pdFALSE,         /* wait for any bit */
+                                           pdMS_TO_TICKS(RECONNECT_TIMEOUT_MS));
+
+    if (bits & RECONN_BIT_CONNECTED) {
+        return true;
+    }
+
+    /* Failed (or timed out). esp_hid auto-frees a failed-open device when it
+     * posts the OPEN-error / CLOSE event; if we timed out with no event yet,
+     * close the in-flight connection so the fallback scan starts clean. */
+    if (self->dev != NULL) {
+        bluetooth_service_hid_close(self->dev);
+        self->dev = NULL;
+    }
+    return false;
+}
+
+static void connect_task(void *arg)
+{
+    dualshock4_esp32_btc_t *self = (dualshock4_esp32_btc_t *)arg;
+    uint8_t bda[6];
+
+    /* Prefer reconnecting to the controller we used last time; only scan when
+     * that address is unknown or the controller did not answer in time. */
+    if (nvs_load_bda(bda)) {
+        ESP_LOGI(TAG, "reconnecting to " ESP_BD_ADDR_STR " (up to %u ms)",
+                 ESP_BD_ADDR_HEX(bda), (unsigned)RECONNECT_TIMEOUT_MS);
+        if (try_reconnect(self, bda)) {
+            ESP_LOGI(TAG, "reconnected");
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "reconnect failed; falling back to scan");
+    }
+
+    scan_and_connect(self);
     vTaskDelete(NULL);
 }
 
@@ -151,7 +268,7 @@ static int esp32_btc_open(dualshock4_transport_t *t, const dualshock4_sink_t *si
     self->sink = sink;
     self->connected = false;
 
-    if (xTaskCreate(scan_and_connect_task, "ds4_btc", 4096, self, 5, NULL) != pdPASS) {
+    if (xTaskCreate(connect_task, "ds4_btc", 4096, self, 5, NULL) != pdPASS) {
         return -1;
     }
     return 0;
@@ -195,6 +312,7 @@ dualshock4_transport_t *dualshock4_esp32_btc_get_default(void)
         s_transport.ops = &s_ops;
         s_transport.ctx = &s_self;
         s_self.transport = &s_transport;
+        s_reconn_evt = xEventGroupCreate();
         bluetooth_service_register_hid_listener(on_hid_event, &s_self);
         initialized = true;
     }
