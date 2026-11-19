@@ -5,6 +5,9 @@
 #include "freertos/timers.h"
 
 #include "bluetooth_service.h"
+#include "gamepad.h"
+#include "host_protocol.h"
+#include "hostlink_esp32_uart.h"
 
 #if defined(CONFIG_GAMEPAD_DUALSENSE)
 #include "dualsense_service.h"
@@ -20,11 +23,27 @@
 
 static const char *TAG = "main";
 
+/* Serialize the connection status + motor value and push it to the host. */
+static void send_status(gamepad_conn_state_t conn, uint8_t motor_value)
+{
+    host_status_payload_t payload = {
+        .conn        = (uint8_t)conn,
+        .motor_value = motor_value,
+    };
+    uint8_t msg[HOST_PROTOCOL_STATUS_FRAME_LEN];
+    size_t len = host_protocol_build_status(msg, &payload);
+    if (len > 0) {
+        hostlink_esp32_uart_send(msg, len);
+    }
+}
+
 #if defined(CONFIG_GAMEPAD_DUALSENSE)
 
 static dualsense_service_t *s_service;
 static dualsense_output_t s_output;      /* last output; re-sent as keepalive */
 static TimerHandle_t s_keepalive_timer;  /* periodic output to keep the DualSense link alive */
+static gamepad_conn_state_t s_conn = GAMEPAD_CONN_DISCONNECTED;
+static uint8_t s_motor = 0;
 
 /* A genuine DualSense drops the Bluetooth link after ~20 s of host silence, so
  * re-send the output report periodically to keep the connection alive. */
@@ -42,6 +61,12 @@ static void keepalive_timer_cb(TimerHandle_t timer)
 static void on_report(const dualsense_state_t *state, void *user)
 {
     (void)user;
+
+    /* Push the latest analog-derived motor value to the host on every report. */
+    gamepad_analog_t analog;
+    gamepad_analog_from_dualsense(state, &analog);
+    s_motor = gamepad_motor_value(&analog);
+    send_status(s_conn, s_motor);
 
     /* Throttle: full 0x31 reports arrive at high rate; logging every one floods
      * the UART. Print a snapshot once every DUALSENSE_LOG_INTERVAL_MS. */
@@ -62,6 +87,13 @@ static void on_report(const dualsense_state_t *state, void *user)
 static void on_conn(dualsense_conn_state_t state, void *user)
 {
     (void)user;
+
+    s_conn = gamepad_conn_from_dualsense(state);
+    if (state != DUALSENSE_CONN_CONNECTED) {
+        s_motor = 0;
+    }
+    send_status(s_conn, s_motor);
+
     ESP_LOGI(TAG, "connection state: %d", (int)state);
 
     if (state == DUALSENSE_CONN_CONNECTED && s_service != NULL) {
@@ -117,6 +149,8 @@ static void start_service(void)
 static dualshock4_service_t *s_service;
 static dualshock4_output_t s_output;      /* last output; re-sent as keepalive */
 static TimerHandle_t s_keepalive_timer;   /* periodic output to keep the DS4 link alive */
+static gamepad_conn_state_t s_conn = GAMEPAD_CONN_DISCONNECTED;
+static uint8_t s_motor = 0;
 
 /* A genuine DS4 drops the Bluetooth link after ~20 s of host silence, so re-send
  * the output report periodically to keep the connection alive. */
@@ -134,6 +168,12 @@ static void keepalive_timer_cb(TimerHandle_t timer)
 static void on_report(const dualshock4_state_t *state, void *user)
 {
     (void)user;
+
+    /* Push the latest analog-derived motor value to the host on every report. */
+    gamepad_analog_t analog;
+    gamepad_analog_from_dualshock4(state, &analog);
+    s_motor = gamepad_motor_value(&analog);
+    send_status(s_conn, s_motor);
 
     /* Throttle: full 0x11 reports arrive at 250 Hz; logging every one floods the
      * UART. Print a snapshot once every DS4_LOG_INTERVAL_MS. */
@@ -162,6 +202,13 @@ static void on_report(const dualshock4_state_t *state, void *user)
 static void on_conn(dualshock4_conn_state_t state, void *user)
 {
     (void)user;
+
+    s_conn = gamepad_conn_from_dualshock4(state);
+    if (state != DUALSHOCK4_CONN_CONNECTED) {
+        s_motor = 0;
+    }
+    send_status(s_conn, s_motor);
+
     ESP_LOGI(TAG, "connection state: %d", (int)state);
 
     if (state == DUALSHOCK4_CONN_CONNECTED && s_service != NULL) {
@@ -224,6 +271,8 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_ERROR_CHECK(bluetooth_service_init(BLUETOOTH_MODE_BTDM));
+    ESP_ERROR_CHECK(hostlink_esp32_uart_init());
+    ESP_ERROR_CHECK(hostlink_esp32_uart_start_pingpong());
 
     start_service();
 
