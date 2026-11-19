@@ -13,6 +13,9 @@ idf_component_register(
         "services/gamepad/gamepad.c"
         "services/hostlink/host_protocol.c"
         "services/hostlink/esp32/hostlink_esp32_uart.c"
+        "services/gpio/gpio_service.c"
+        "services/rotary-encoder/rotary_encoder.c"
+        "services/rotary-encoder/esp32/rotary_encoder_esp32.c"
     INCLUDE_DIRS
         "."
         "services/bluetooth"
@@ -23,8 +26,13 @@ idf_component_register(
         "services/gamepad"
         "services/hostlink"
         "services/hostlink/esp32"
+        "services/gpio"
+        "services/rotary-encoder"
+        "services/rotary-encoder/esp32"
     REQUIRES
         esp_hid
         nvs_flash
         esp_driver_uart
+        esp_driver_spi
+        esp_driver_gpio
 )
