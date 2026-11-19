@@ -22,3 +22,7 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # Flash size: match the 16 MB GigaDevice flash on this WROOM-32D module
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# 1 ms tick so the rotary-encoder self-test can sample at 200 Hz via
+# vTaskDelayUntil (the default 100 Hz rounds a 5 ms period to 0 ticks).
+CONFIG_FREERTOS_HZ=1000

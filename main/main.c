@@ -1,3 +1,8 @@
+/* Temporary encoder self-test: 1 = run the AS5047P register dump + angle stream
+ * instead of the gamepad path. Remove this whole block after hardware
+ * verification. */
+#define ROTARY_ENCODER_SELFTEST 0
+
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -8,6 +13,18 @@
 #include "gamepad.h"
 #include "host_protocol.h"
 #include "hostlink_esp32_uart.h"
+
+#if ROTARY_ENCODER_SELFTEST
+#include <inttypes.h>
+#include <stdio.h>
+
+#include "esp_timer.h"
+#include "freertos/task.h"
+
+#include "gpio_service.h"
+#include "rotary_encoder.h"
+#include "rotary_encoder_esp32.h"
+#endif
 
 #if defined(CONFIG_GAMEPAD_DUALSENSE)
 #include "dualsense_service.h"
@@ -36,6 +53,83 @@ static void send_status(gamepad_conn_state_t conn, uint8_t motor_value)
         hostlink_esp32_uart_send(msg, len);
     }
 }
+
+#if ROTARY_ENCODER_SELFTEST
+
+/* Wiring (hardware-verified in the reference spi-driver): VCC=5V, SCK=18,
+ * MISO=19, MOSI=23, CS=5. */
+#define PIN_SCK   18
+#define PIN_MISO  19
+#define PIN_MOSI  23
+#define PIN_CS    5
+
+#define SPI_CLOCK_HZ (5 * 1000 * 1000) /* datasheet allows up to 10 MHz */
+#define SAMPLE_HZ    200               /* encoder self-test sample rate */
+
+static void rotary_encoder_dump_regs(rotary_encoder_t *enc)
+{
+    static const struct {
+        uint16_t addr;
+        const char *name;
+    } regs[] = {
+        { ROTARY_ENCODER_REG_ERRFL,     "ERRFL" },
+        { ROTARY_ENCODER_REG_SETTINGS1, "SETTINGS1" },
+        { ROTARY_ENCODER_REG_SETTINGS2, "SETTINGS2" },
+        { ROTARY_ENCODER_REG_ZPOSM,     "ZPOSM" },
+        { ROTARY_ENCODER_REG_ZPOSL,     "ZPOSL" },
+        { ROTARY_ENCODER_REG_DIAAGC,    "DIAAGC" },
+        { ROTARY_ENCODER_REG_MAG,       "MAG" },
+        { ROTARY_ENCODER_REG_ANGLEUNC,  "ANGLEUNC" },
+        { ROTARY_ENCODER_REG_ANGLECOM,  "ANGLECOM" },
+    };
+    rotary_encoder_sample_t r;
+
+    for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
+        if (rotary_encoder_read_reg(enc, regs[i].addr, &r) == 0) {
+            printf("# reg %s=0x%04x ef=%u par=%u\n", regs[i].name, r.counts,
+                   (unsigned)r.command_error, (unsigned)r.parity_ok);
+        }
+    }
+}
+
+static void rotary_encoder_selftest(void)
+{
+    gpio_spi_device_t *dev = NULL;
+
+    ESP_ERROR_CHECK(gpio_spi_bus_init(SPI2_HOST, PIN_SCK, PIN_MOSI, PIN_MISO));
+    ESP_ERROR_CHECK(gpio_spi_device_add(SPI2_HOST, PIN_CS, SPI_CLOCK_HZ, 1, &dev));
+
+    rotary_encoder_transport_t transport;
+    rotary_encoder_esp32_transport_init(dev, &transport);
+
+    rotary_encoder_t enc;
+    rotary_encoder_init(&enc, &transport);
+
+    rotary_encoder_dump_regs(&enc);
+
+    /* First angle read only primes the pipelined transfer. */
+    rotary_encoder_sample_t r;
+    rotary_encoder_read_angle(&enc, &r);
+
+    printf("# t_us,raw,deg,rad,ef,par\n");
+
+    /* 200 Hz = 5 ms. Requires a tick period finer than 5 ms, so sdkconfig sets
+     * CONFIG_FREERTOS_HZ=1000 (1 ms ticks); this resolves to 5 ticks. */
+    const TickType_t period = pdMS_TO_TICKS(1000 / SAMPLE_HZ);
+    TickType_t last_wake = xTaskGetTickCount();
+
+    for (;;) {
+        if (rotary_encoder_read_angle(&enc, &r) == 0) {
+            int64_t t = esp_timer_get_time();
+            printf("%" PRId64 ",%u,%.3f,%.5f,%u,%u\n", t, r.counts,
+                   rotary_encoder_to_deg(r.counts), rotary_encoder_to_rad(r.counts),
+                   (unsigned)r.command_error, (unsigned)r.parity_ok);
+        }
+        vTaskDelayUntil(&last_wake, period);
+    }
+}
+
+#endif /* ROTARY_ENCODER_SELFTEST */
 
 #if defined(CONFIG_GAMEPAD_DUALSENSE)
 
@@ -263,6 +357,10 @@ static void start_service(void)
 
 void app_main(void)
 {
+#if ROTARY_ENCODER_SELFTEST
+    rotary_encoder_selftest();
+    return;
+#else
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -277,4 +375,5 @@ void app_main(void)
     start_service();
 
     ESP_LOGI(TAG, "%s service started; put the controller in pairing mode", GAMEPAD_NAME);
+#endif
 }
