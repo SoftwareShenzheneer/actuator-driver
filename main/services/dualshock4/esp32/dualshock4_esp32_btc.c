@@ -25,6 +25,11 @@
  * falling back to a fresh discovery scan. */
 #define RECONNECT_TIMEOUT_MS   10000
 
+/* A DS4/DualSense in pairing mode alternates inquiry/page scan, so a single page
+ * can time out even when the controller is connectable. Retry the open. */
+#define OPEN_MAX_ATTEMPTS      3
+#define OPEN_TIMEOUT_MS        8000    /* > the ~5.1 s classic page timeout */
+
 /* NVS location of the last-known controller address (6-byte BD_ADDR blob). */
 #define NVS_NAMESPACE          "dualshock4"
 #define NVS_KEY_BDA            "bda"
@@ -161,19 +166,57 @@ static void on_hid_event(const bluetooth_hid_event_data_t *evt, void *arg)
     }
 }
 
+typedef enum {
+    OPEN_CONNECTED = 0,
+    OPEN_FAILED,       /* OPEN-error / CLOSE event reported a failure */
+    OPEN_TIMEOUT,      /* no event before the timeout elapsed */
+} open_result_t;
+
+/* Issue one esp_hidh_dev_open and wait for the asynchronous OPEN/CLOSE result. */
+static open_result_t open_once(dualshock4_esp32_btc_t *self, const uint8_t bda[6],
+                               uint32_t timeout_ms)
+{
+    xEventGroupClearBits(s_reconn_evt, RECONN_BIT_CONNECTED | RECONN_BIT_FAILED);
+
+    self->dev = bluetooth_service_hid_open(bda, ESP_HID_TRANSPORT_BT, 0);
+    if (self->dev == NULL) {
+        return OPEN_FAILED;
+    }
+
+    EventBits_t bits = xEventGroupWaitBits(s_reconn_evt,
+                                           RECONN_BIT_CONNECTED | RECONN_BIT_FAILED,
+                                           pdTRUE,          /* clear bits on exit */
+                                           pdFALSE,         /* wait for any bit */
+                                           pdMS_TO_TICKS(timeout_ms));
+
+    if (bits & RECONN_BIT_CONNECTED) {
+        return OPEN_CONNECTED;
+    }
+
+    if (bits & RECONN_BIT_FAILED) {
+        /* The OPEN-error / CLOSE handler already freed the device. */
+        return OPEN_FAILED;
+    }
+
+    /* Timed out before any event: abort the in-flight connection. */
+    if (self->dev != NULL) {
+        bluetooth_service_hid_close(self->dev);
+        self->dev = NULL;
+    }
+    return OPEN_TIMEOUT;
+}
+
 static void scan_and_connect(dualshock4_esp32_btc_t *self)
 {
     size_t num = 0;
     bluetooth_device_t *results = NULL;
     bluetooth_device_t *found = NULL;
+    uint8_t bda[6];
 
     ESP_LOGI(TAG, "scanning for '%s'...", DUALSHOCK4_PEER_NAME);
 
     if (bluetooth_service_scan(SCAN_DURATION_SECONDS, &num, &results) != ESP_OK) {
-        ESP_LOGE(TAG, "scan failed");
-        if (self->sink != NULL && self->sink->on_conn != NULL) {
-            self->sink->on_conn(self->sink->ctx, DUALSHOCK4_CONN_ERROR);
-        }
+        ESP_LOGW(TAG, "scan failed");
         return;
     }
 
@@ -187,57 +230,39 @@ static void scan_and_connect(dualshock4_esp32_btc_t *self)
 
     if (found == NULL) {
         ESP_LOGW(TAG, "'%s' not found (%u devices seen)", DUALSHOCK4_PEER_NAME, (unsigned)num);
-        if (self->sink != NULL && self->sink->on_conn != NULL) {
-            self->sink->on_conn(self->sink->ctx, DUALSHOCK4_CONN_ERROR);
-        }
-    } else {
-        if (found->name != NULL) {
-            strncpy(self->name, found->name, sizeof(self->name) - 1);
-            self->name[sizeof(self->name) - 1] = '\0';
-        }
-        ESP_LOGI(TAG, "opening " ESP_BD_ADDR_STR, ESP_BD_ADDR_HEX(found->bda));
-        self->dev = bluetooth_service_hid_open(found->bda, ESP_HID_TRANSPORT_BT, 0);
-        if (self->dev == NULL) {
-            ESP_LOGE(TAG, "failed to open device");
-            if (self->sink != NULL && self->sink->on_conn != NULL) {
-                self->sink->on_conn(self->sink->ctx, DUALSHOCK4_CONN_ERROR);
-            }
-        }
-        /* OPEN/ERROR is reported asynchronously through on_hid_event(). */
+        bluetooth_service_scan_results_free(results);
+        return;
     }
 
+    if (found->name != NULL) {
+        strncpy(self->name, found->name, sizeof(self->name) - 1);
+        self->name[sizeof(self->name) - 1] = '\0';
+    }
+    memcpy(bda, found->bda, sizeof(bda));
     bluetooth_service_scan_results_free(results);
+
+    ESP_LOGI(TAG, "opening " ESP_BD_ADDR_STR, ESP_BD_ADDR_HEX(bda));
+
+    /* A DS4 in pairing mode alternates inquiry/page scan, so a single page can
+     * time out even when it is connectable. Retry the open a few times. */
+    for (int attempt = 0; attempt < OPEN_MAX_ATTEMPTS; attempt++) {
+        open_result_t r = open_once(self, bda, OPEN_TIMEOUT_MS);
+        if (r == OPEN_CONNECTED) {
+            break;
+        }
+        ESP_LOGW(TAG, "open attempt %d/%d failed (%s)", attempt + 1, OPEN_MAX_ATTEMPTS,
+                 (r == OPEN_TIMEOUT) ? "timeout" : "sdp/page error");
+        if (attempt + 1 < OPEN_MAX_ATTEMPTS) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
 }
 
 /* Attempt a direct reconnect to `bda`. Blocks up to RECONNECT_TIMEOUT_MS for the
  * asynchronous OPEN/CLOSE result. Returns true if the controller connected. */
 static bool try_reconnect(dualshock4_esp32_btc_t *self, const uint8_t bda[6])
 {
-    xEventGroupClearBits(s_reconn_evt, RECONN_BIT_CONNECTED | RECONN_BIT_FAILED);
-
-    self->dev = bluetooth_service_hid_open(bda, ESP_HID_TRANSPORT_BT, 0);
-    if (self->dev == NULL) {
-        return false;
-    }
-
-    EventBits_t bits = xEventGroupWaitBits(s_reconn_evt,
-                                           RECONN_BIT_CONNECTED | RECONN_BIT_FAILED,
-                                           pdTRUE,          /* clear bits on exit */
-                                           pdFALSE,         /* wait for any bit */
-                                           pdMS_TO_TICKS(RECONNECT_TIMEOUT_MS));
-
-    if (bits & RECONN_BIT_CONNECTED) {
-        return true;
-    }
-
-    /* Failed (or timed out). esp_hid auto-frees a failed-open device when it
-     * posts the OPEN-error / CLOSE event; if we timed out with no event yet,
-     * close the in-flight connection so the fallback scan starts clean. */
-    if (self->dev != NULL) {
-        bluetooth_service_hid_close(self->dev);
-        self->dev = NULL;
-    }
-    return false;
+    return open_once(self, bda, RECONNECT_TIMEOUT_MS) == OPEN_CONNECTED;
 }
 
 static void connect_task(void *arg)
@@ -258,7 +283,14 @@ static void connect_task(void *arg)
         ESP_LOGW(TAG, "reconnect failed; falling back to scan");
     }
 
-    scan_and_connect(self);
+    /* Keep scanning until the controller is put in pairing mode and connects. */
+    while (!self->connected) {
+        scan_and_connect(self);
+        if (!self->connected) {
+            vTaskDelay(pdMS_TO_TICKS(3000));
+        }
+    }
+
     vTaskDelete(NULL);
 }
 

@@ -2,7 +2,7 @@ menu "Gamepad"
 
     choice GAMEPAD_MODEL
         prompt "Gamepad model"
-        default GAMEPAD_DUALSENSE
+        default GAMEPAD_DUALSHOCK4
 
         config GAMEPAD_DUALSENSE
             bool "Sony DualSense (PS5)"
@@ -47,5 +47,28 @@ menu "Host link (UART)"
         default 921600
         help
             Baud rate for the serial link to the host.
+
+endmenu
+
+menu "Encoder"
+
+    choice ENCODER_MODEL
+        prompt "Encoder model"
+        default ENCODER_AS5600
+
+        config ENCODER_AS5600
+            bool "AS5600 (I2C) - FOC motor encoders"
+            help
+                Two AS5600 magnetic encoders on I2C buses 0 and 1, used as the
+                FOC motor angle sensors (DengFOC V3P board).
+
+        config ENCODER_AS5047P
+            bool "AS5047P (SPI) rotary encoder"
+            help
+                A single AS5047P magnetic rotary encoder on SPI. Currently only a
+                self-test is wired up; selecting this builds the SPI encoder
+                module and runs the self-test instead of the gamepad/FOC path.
+
+    endchoice
 
 endmenu

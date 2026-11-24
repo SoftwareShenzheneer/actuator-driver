@@ -1,27 +1,29 @@
 # Target: ESP32-WROOM-32D (dual-mode Bluetooth: Classic + BLE)
 CONFIG_IDF_TARGET="esp32"
 
-# ---- Bluetooth: dual mode (Classic BT + BLE), Bluedroid host stack ----
+# ---- Gamepad: DualShock 4 (PS4) ----
+CONFIG_GAMEPAD_DUALSHOCK4=y
+
+# ---- Bluetooth: Classic BT only (Bluedroid host stack) ----
+# The gamepad uses Classic BT. Running BLE in dual (BTDM) mode was found to break
+# classic-BT paging: the controller is discovered (inquiry) but every page times out.
 CONFIG_BT_ENABLED=y
-CONFIG_BTDM_CTRL_MODE_BTDM=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y
+CONFIG_BTDM_CTRL_MODEM_SLEEP=n
 CONFIG_BT_BLUEDROID_ENABLED=y
 CONFIG_BT_CLASSIC_ENABLED=y
-CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_BLE_ENABLED=n
 
-# ---- HID Host (Classic BT), used by the DualSense backend ----
+# ---- HID Host (Classic BT), used by the DualShock 4 backend ----
 CONFIG_BT_HID_ENABLED=y
 CONFIG_BT_HID_HOST_ENABLED=y
-
-# ESP32 (original) supports Bluetooth 4.2, not 5.0
-CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
-CONFIG_BT_GATTC_NOTIF_REG_MAX=16
 
 # Bluedroid (Classic + BLE) does not fit in the default ~1 MB app partition
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# Flash size: match the 16 MB GigaDevice flash on this WROOM-32D module
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# Flash size: 4 MB module (Lolin32 Lite / DengFOC V3P)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # 1 ms tick so the rotary-encoder self-test can sample at 200 Hz via
 # vTaskDelayUntil (the default 100 Hz rounds a 5 ms period to 0 ticks).

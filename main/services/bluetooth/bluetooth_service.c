@@ -465,6 +465,15 @@ esp_err_t bluetooth_service_init(bluetooth_mode_t mode)
     }
     ESP_LOGI(TAG, "init: controller_enable ok free_heap=%u", (unsigned)esp_get_free_heap_size());
 
+    /* Boost classic-BT TX power. Some modules (e.g. the DengFOC board's ESP32)
+     * have a weaker antenna: discovery (inquiry) succeeds at the default +3 dBm,
+     * but the tighter bidirectional page can time out. */
+    if (esp_bredr_tx_power_set(ESP_PWR_LVL_P9, ESP_PWR_LVL_P9) == ESP_OK) {
+        ESP_LOGI(TAG, "init: br_edr tx power set to +9 dBm");
+    } else {
+        ESP_LOGW(TAG, "init: failed to set br_edr tx power");
+    }
+
     esp_bluedroid_config_t bluedroid_cfg = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
     ret = esp_bluedroid_init_with_cfg(&bluedroid_cfg);
     if (ret != ESP_OK) {
