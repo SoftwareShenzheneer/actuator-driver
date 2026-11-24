@@ -5,6 +5,9 @@ build/
 sdkconfig
 sdkconfig.old
 
+# Managed components (downloaded by the IDF component manager)
+managed_components/
+
 # Python
 __pycache__/
 *.pyc

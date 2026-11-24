@@ -37,14 +37,6 @@ typedef struct {
     uint8_t trigger_r2;
 } gamepad_analog_t;
 
-/* Simulator motor control value derived from the analog inputs.
- *
- * Placeholder mapping: right trigger == throttle (0..255). When the actuator
- * mapping is defined, swap this for a bidirectional scheme (R2 forward / L2
- * reverse) or a stick axis — both triggers and sticks are available in
- * gamepad_analog_t. */
-uint8_t gamepad_motor_value(const gamepad_analog_t *analog);
-
 /* Adapt connection state from each controller to the common enum. */
 gamepad_conn_state_t gamepad_conn_from_dualsense(dualsense_conn_state_t s);
 gamepad_conn_state_t gamepad_conn_from_dualshock4(dualshock4_conn_state_t s);

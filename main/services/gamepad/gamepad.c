@@ -1,10 +1,5 @@
 #include "gamepad.h"
 
-uint8_t gamepad_motor_value(const gamepad_analog_t *analog)
-{
-    return analog ? analog->trigger_r2 : 0;
-}
-
 gamepad_conn_state_t gamepad_conn_from_dualsense(dualsense_conn_state_t s)
 {
     switch (s) {

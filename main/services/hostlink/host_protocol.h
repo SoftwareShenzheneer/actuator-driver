@@ -27,9 +27,10 @@ extern "C" {
 #define HOST_PROTOCOL_OFF_DATA  3
 
 /* Payload layout for HOST_PROTOCOL_TYPE_STATUS. */
-#define HOST_STATUS_PAYLOAD_LEN   2u
-#define HOST_STATUS_OFF_CONN      0
-#define HOST_STATUS_OFF_MOTOR     1
+#define HOST_STATUS_PAYLOAD_LEN    5u
+#define HOST_STATUS_OFF_CONN       0
+#define HOST_STATUS_OFF_VEL_LEFT   1
+#define HOST_STATUS_OFF_VEL_RIGHT  3
 
 /* SOF + TYPE + LEN + payload + trailing checksum. */
 #define HOST_PROTOCOL_STATUS_FRAME_LEN \
@@ -38,8 +39,9 @@ extern "C" {
 /* The status "object" that is serialized into the payload. Add fields here (and
  * bump HOST_STATUS_PAYLOAD_LEN) as the object grows. */
 typedef struct {
-    uint8_t conn;         /* connection state (see gamepad_conn_state_t) */
-    uint8_t motor_value;  /* simulator motor control, 0..255 */
+    uint8_t conn;        /* connection state (see gamepad_conn_state_t) */
+    int16_t vel_left;    /* left  motor velocity, rad/s * 10, little-endian */
+    int16_t vel_right;   /* right motor velocity, rad/s * 10, little-endian */
 } host_status_payload_t;
 
 /* Serialize a status message into msg[] (at least HOST_PROTOCOL_STATUS_FRAME_LEN

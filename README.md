@@ -39,6 +39,10 @@ main/
       dualshock4_service.[ch]
       esp32/
         dualshock4_esp32_btc.[ch]
+    foc/                          # FOC motor control
+      foc.[ch]                    # portable: interface + trigger -> velocity mapping
+      esp32/
+        foc_esp32.[ch]            # platform backend: esp_simplefoc (MCPWM + AS5600)
 ```
 
 Each controller has a portable core (all files except `esp32/`) with **no
@@ -56,6 +60,24 @@ discovery:
 
 The scan connects to the first device whose name starts with that prefix, so
 only enable the model you actually have in range.
+
+## Motor control (FOC)
+
+Field-oriented control drives two BLDC gimbal motors (DengFOC V3P board) using
+Espressif's `espressif/esp_simplefoc` component — the same method as the
+`simplefoc` reference project, no Arduino core.
+
+- `services/foc/` is the portable interface plus the trigger→velocity mapping;
+  the `esp32/` backend wraps `esp_simplefoc` (MCPWM + AS5600) and runs the
+  control loop in a FreeRTOS task at ~1 kHz.
+- Pinout (right = M0, left = M1):
+  - right motor: PWM 32/33/25, AS5600 on I2C0 (SCL 18, SDA 19)
+  - left motor:  PWM 26/27/14, AS5600 on I2C1 (SCL 5,  SDA 23)
+  - shared motor enable: GPIO 12 (GPIO 22 also asserted)
+- Controller mapping: R2 → right motor, L2 → left motor, each linearly mapped
+  0–255 → 0–10 rev/s (≈600 RPM / ≈62.8 rad/s).
+- Each motor is aligned independently at startup; a missing motor is reported
+  and skipped so the other still runs.
 
 ## Build (Ubuntu WSL)
 

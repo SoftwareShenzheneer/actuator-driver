@@ -1,8 +1,3 @@
-/* Temporary encoder self-test: 1 = run the AS5047P register dump + angle stream
- * instead of the gamepad path. Remove this whole block after hardware
- * verification. */
-#define ROTARY_ENCODER_SELFTEST 0
-
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -10,11 +5,13 @@
 #include "freertos/timers.h"
 
 #include "bluetooth_service.h"
+#include "foc.h"
+#include "foc_esp32.h"
 #include "gamepad.h"
 #include "host_protocol.h"
 #include "hostlink_esp32_uart.h"
 
-#if ROTARY_ENCODER_SELFTEST
+#if CONFIG_ENCODER_AS5047P
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -39,13 +36,15 @@
 #endif
 
 static const char *TAG = "main";
+static foc_t *s_foc = NULL;
 
-/* Serialize the connection status + motor value and push it to the host. */
-static void send_status(gamepad_conn_state_t conn, uint8_t motor_value)
+/* Serialize the connection status + both motor velocities and push to host. */
+static void send_status(gamepad_conn_state_t conn)
 {
     host_status_payload_t payload = {
-        .conn        = (uint8_t)conn,
-        .motor_value = motor_value,
+        .conn      = (uint8_t)conn,
+        .vel_left  = (int16_t)(foc_get_velocity(s_foc, FOC_MOTOR_LEFT) * 10.0f),
+        .vel_right = (int16_t)(foc_get_velocity(s_foc, FOC_MOTOR_RIGHT) * 10.0f),
     };
     uint8_t msg[HOST_PROTOCOL_STATUS_FRAME_LEN];
     size_t len = host_protocol_build_status(msg, &payload);
@@ -54,7 +53,7 @@ static void send_status(gamepad_conn_state_t conn, uint8_t motor_value)
     }
 }
 
-#if ROTARY_ENCODER_SELFTEST
+#if CONFIG_ENCODER_AS5047P
 
 /* Wiring (hardware-verified in the reference spi-driver): VCC=5V, SCK=18,
  * MISO=19, MOSI=23, CS=5. */
@@ -129,7 +128,7 @@ static void rotary_encoder_selftest(void)
     }
 }
 
-#endif /* ROTARY_ENCODER_SELFTEST */
+#endif /* CONFIG_ENCODER_AS5047P */
 
 #if defined(CONFIG_GAMEPAD_DUALSENSE)
 
@@ -137,7 +136,6 @@ static dualsense_service_t *s_service;
 static dualsense_output_t s_output;      /* last output; re-sent as keepalive */
 static TimerHandle_t s_keepalive_timer;  /* periodic output to keep the DualSense link alive */
 static gamepad_conn_state_t s_conn = GAMEPAD_CONN_DISCONNECTED;
-static uint8_t s_motor = 0;
 
 /* A genuine DualSense drops the Bluetooth link after ~20 s of host silence, so
  * re-send the output report periodically to keep the connection alive. */
@@ -156,11 +154,12 @@ static void on_report(const dualsense_state_t *state, void *user)
 {
     (void)user;
 
-    /* Push the latest analog-derived motor value to the host on every report. */
+    /* Drive the motors from the analog triggers: R2 -> right, L2 -> left. */
     gamepad_analog_t analog;
     gamepad_analog_from_dualsense(state, &analog);
-    s_motor = gamepad_motor_value(&analog);
-    send_status(s_conn, s_motor);
+    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, foc_trigger_to_velocity(analog.trigger_r2));
+    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  foc_trigger_to_velocity(analog.trigger_l2));
+    send_status(s_conn);
 
     /* Throttle: full 0x31 reports arrive at high rate; logging every one floods
      * the UART. Print a snapshot once every DUALSENSE_LOG_INTERVAL_MS. */
@@ -184,9 +183,10 @@ static void on_conn(dualsense_conn_state_t state, void *user)
 
     s_conn = gamepad_conn_from_dualsense(state);
     if (state != DUALSENSE_CONN_CONNECTED) {
-        s_motor = 0;
+        foc_set_velocity(s_foc, FOC_MOTOR_LEFT, 0.0f);
+        foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, 0.0f);
     }
-    send_status(s_conn, s_motor);
+    send_status(s_conn);
 
     ESP_LOGI(TAG, "connection state: %d", (int)state);
 
@@ -244,7 +244,6 @@ static dualshock4_service_t *s_service;
 static dualshock4_output_t s_output;      /* last output; re-sent as keepalive */
 static TimerHandle_t s_keepalive_timer;   /* periodic output to keep the DS4 link alive */
 static gamepad_conn_state_t s_conn = GAMEPAD_CONN_DISCONNECTED;
-static uint8_t s_motor = 0;
 
 /* A genuine DS4 drops the Bluetooth link after ~20 s of host silence, so re-send
  * the output report periodically to keep the connection alive. */
@@ -263,11 +262,12 @@ static void on_report(const dualshock4_state_t *state, void *user)
 {
     (void)user;
 
-    /* Push the latest analog-derived motor value to the host on every report. */
+    /* Drive the motors from the analog triggers: R2 -> right, L2 -> left. */
     gamepad_analog_t analog;
     gamepad_analog_from_dualshock4(state, &analog);
-    s_motor = gamepad_motor_value(&analog);
-    send_status(s_conn, s_motor);
+    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, foc_trigger_to_velocity(analog.trigger_r2));
+    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  foc_trigger_to_velocity(analog.trigger_l2));
+    send_status(s_conn);
 
     /* Throttle: full 0x11 reports arrive at 250 Hz; logging every one floods the
      * UART. Print a snapshot once every DS4_LOG_INTERVAL_MS. */
@@ -299,9 +299,10 @@ static void on_conn(dualshock4_conn_state_t state, void *user)
 
     s_conn = gamepad_conn_from_dualshock4(state);
     if (state != DUALSHOCK4_CONN_CONNECTED) {
-        s_motor = 0;
+        foc_set_velocity(s_foc, FOC_MOTOR_LEFT, 0.0f);
+        foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, 0.0f);
     }
-    send_status(s_conn, s_motor);
+    send_status(s_conn);
 
     ESP_LOGI(TAG, "connection state: %d", (int)state);
 
@@ -310,8 +311,8 @@ static void on_conn(dualshock4_conn_state_t state, void *user)
          * can tell whether our output report is actually taking effect. The
          * rumble stays on until reset — proper control comes later. */
         s_output = (dualshock4_output_t) {
-            .motor_left  = 128,   /* strong rumble: whole body */
-            .motor_right = 128,   /* weak rumble: grips */
+            .motor_left  = 0,     /* rumble off; red lightbar is the feedback */
+            .motor_right = 0,
             .led_red     = 255,
             .led_green   = 0,
             .led_blue    = 0,
@@ -357,7 +358,7 @@ static void start_service(void)
 
 void app_main(void)
 {
-#if ROTARY_ENCODER_SELFTEST
+#if CONFIG_ENCODER_AS5047P
     rotary_encoder_selftest();
     return;
 #else
@@ -368,11 +369,19 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_ERROR_CHECK(bluetooth_service_init(BLUETOOTH_MODE_BTDM));
+    ESP_ERROR_CHECK(bluetooth_service_init(BLUETOOTH_MODE_BT));
     ESP_ERROR_CHECK(hostlink_esp32_uart_init());
     ESP_ERROR_CHECK(hostlink_esp32_uart_start_pingpong());
 
     start_service();
+
+    /* Bring up the FOC motors (blocks briefly for sensor alignment). */
+    s_foc = foc_esp32_create();
+    if (s_foc == NULL) {
+        ESP_LOGE(TAG, "failed to create FOC instance");
+    } else if (foc_init(s_foc) != 0) {
+        ESP_LOGE(TAG, "failed to initialize FOC motors");
+    }
 
     ESP_LOGI(TAG, "%s service started; put the controller in pairing mode", GAMEPAD_NAME);
 #endif

@@ -7,6 +7,8 @@
  */
 #include "rotary_encoder.h"
 
+#include <stddef.h>
+
 #define ADDR_UNKNOWN 0xFFFFu
 
 /* Number of set bits modulo 2 (1 = odd). */
