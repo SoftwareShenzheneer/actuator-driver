@@ -14,6 +14,8 @@ set(sources
     "services/hostlink/esp32/hostlink_esp32_uart.c"
     "services/foc/foc.c"
     "services/foc/esp32/foc_esp32.cpp"
+    "services/foc/esp32/as5047p_sensor.cpp"
+    "services/foc/esp32/local_lowside_cs.cpp"
 )
 
 set(include_dirs
@@ -37,6 +39,7 @@ set(requires
     esp_driver_gpio
     esp_driver_mcpwm
     esp_driver_i2c
+    esp_driver_spi
 )
 
 # The AS5047P SPI encoder is an alternative to the AS5600 (FOC) encoders. It is

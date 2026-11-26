@@ -57,5 +57,10 @@ float foc_get_velocity(foc_t *f, foc_motor_t motor)
 
 float foc_trigger_to_velocity(uint8_t trigger)
 {
-    return ((float)trigger / FOC_TRIGGER_MAX) * FOC_MAX_VELOCITY_RAD_S;
+    /* Progressive (quadratic) response instead of linear: the first part of the
+     * trigger travel gives fine low-RPM control, and the response steepens toward
+     * full travel so high RPM is still reached. x^2 maps 0->0 and 1->1, so full
+     * trigger still commands FOC_MAX_VELOCITY_RAD_S. */
+    float x = (float)trigger / FOC_TRIGGER_MAX;
+    return (x * x) * FOC_MAX_VELOCITY_RAD_S;
 }

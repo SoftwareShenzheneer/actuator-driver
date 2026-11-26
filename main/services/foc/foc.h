@@ -56,9 +56,9 @@ void  foc_set_velocity(foc_t *f, foc_motor_t motor, float rad_s);
 float foc_get_velocity(foc_t *f, foc_motor_t motor);
 
 /* Gamepad analog triggers are 0..255. The trigger value maps linearly to a
- * velocity target between 0 and FOC_MAX_VELOCITY_RAD_S (10 rev/s). */
+ * velocity target between 0 and FOC_MAX_VELOCITY_RAD_S. */
 #define FOC_TRIGGER_MAX         255.0f
-#define FOC_MAX_SPEED_REV_PER_S 4.0f    /* ~240 RPM: max the AS5600 + 1 kHz loop tracks cleanly */
+#define FOC_MAX_SPEED_REV_PER_S 30.0f   /* 1800 RPM: stepped down from 40 to run cooler while we check temperatures */
 #define FOC_MAX_VELOCITY_RAD_S  (FOC_MAX_SPEED_REV_PER_S * 2.0f * 3.14159265f)
 
 float foc_trigger_to_velocity(uint8_t trigger);
