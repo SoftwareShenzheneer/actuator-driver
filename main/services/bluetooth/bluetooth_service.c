@@ -637,6 +637,19 @@ void bluetooth_service_hid_free(esp_hidh_dev_t *dev)
     }
 }
 
+/* esp_hidh internal: actually removes a device from the host device list. The
+ * public esp_hidh_dev_free() is a no-op, so expose this to clear a lingering
+ * entry left behind after a failed page (which otherwise causes "Already
+ * Connected" on the next open). */
+extern esp_err_t esp_hidh_dev_free_inner(esp_hidh_dev_t *dev);
+
+void bluetooth_service_hid_free_force(esp_hidh_dev_t *dev)
+{
+    if (dev != NULL) {
+        esp_hidh_dev_free_inner(dev);
+    }
+}
+
 esp_err_t bluetooth_service_hid_send_output(esp_hidh_dev_t *dev, size_t map_index, size_t report_id,
                                             const uint8_t *data, size_t len)
 {

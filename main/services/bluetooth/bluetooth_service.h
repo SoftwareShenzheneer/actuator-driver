@@ -77,6 +77,7 @@ esp_hidh_dev_t *bluetooth_service_hid_open(const uint8_t bda[6], esp_hid_transpo
                                            uint8_t ble_addr_type);
 esp_err_t bluetooth_service_hid_close(esp_hidh_dev_t *dev);
 void bluetooth_service_hid_free(esp_hidh_dev_t *dev);
+void bluetooth_service_hid_free_force(esp_hidh_dev_t *dev);
 esp_err_t bluetooth_service_hid_send_output(esp_hidh_dev_t *dev, size_t map_index, size_t report_id,
                                             const uint8_t *data, size_t len);
 esp_err_t bluetooth_service_hid_set_protocol(esp_hidh_dev_t *dev, uint8_t protocol_mode);

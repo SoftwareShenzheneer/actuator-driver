@@ -198,9 +198,12 @@ static open_result_t open_once(dualshock4_esp32_btc_t *self, const uint8_t bda[6
         return OPEN_FAILED;
     }
 
-    /* Timed out before any event: abort the in-flight connection. */
+    /* Timed out before any event: abort the in-flight connection and force-free
+     * the device entry. esp_hid keeps the entry after a failed page, which would
+     * otherwise make the next open fail with "Already Connected". */
     if (self->dev != NULL) {
         bluetooth_service_hid_close(self->dev);
+        bluetooth_service_hid_free_force(self->dev);
         self->dev = NULL;
     }
     return OPEN_TIMEOUT;

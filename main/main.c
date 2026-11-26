@@ -154,11 +154,12 @@ static void on_report(const dualsense_state_t *state, void *user)
 {
     (void)user;
 
-    /* Drive the motors from the analog triggers: R2 -> right, L2 -> left. */
+    /* R2 drives BOTH channels (single motor, channel mapping TBD). */
     gamepad_analog_t analog;
     gamepad_analog_from_dualsense(state, &analog);
-    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, foc_trigger_to_velocity(analog.trigger_r2));
-    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  foc_trigger_to_velocity(analog.trigger_l2));
+    float r2_vel = foc_trigger_to_velocity(analog.trigger_r2);
+    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, r2_vel);
+    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  r2_vel);
     send_status(s_conn);
 
     /* Throttle: full 0x31 reports arrive at high rate; logging every one floods
@@ -262,11 +263,12 @@ static void on_report(const dualshock4_state_t *state, void *user)
 {
     (void)user;
 
-    /* Drive the motors from the analog triggers: R2 -> right, L2 -> left. */
+    /* R2 drives BOTH channels (single motor, channel mapping TBD). */
     gamepad_analog_t analog;
     gamepad_analog_from_dualshock4(state, &analog);
-    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, foc_trigger_to_velocity(analog.trigger_r2));
-    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  foc_trigger_to_velocity(analog.trigger_l2));
+    float r2_vel = foc_trigger_to_velocity(analog.trigger_r2);
+    foc_set_velocity(s_foc, FOC_MOTOR_RIGHT, r2_vel);
+    foc_set_velocity(s_foc, FOC_MOTOR_LEFT,  r2_vel);
     send_status(s_conn);
 
     /* Throttle: full 0x11 reports arrive at 250 Hz; logging every one floods the
